@@ -1,0 +1,260 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,user-scalable=no,minimum-scale=1.0,maximum-scale=1.0">
+
+  <style>
+  body {
+    font-family: Monospace;
+    background-color: #000;
+    color: #000;
+    margin: 0px;
+    overflow: hidden;
+  }
+  #info {
+    text-align: center;
+    padding: 10px;
+    z-index: 10;
+    width: 100%;
+    position: absolute;
+  }
+  a {
+    text-decoration: underline;
+    cursor: pointer;
+  }
+  </style>
+  <script src="./libs/Three.js"></script>
+  <script src="./libs/TrackballControls.js"></script>
+  <script src="./libs/Detector.js"></script>
+  <script src="./build/cannon.js"></script>
+</head>
+<body>
+  <header>
+    <title>Ikesu Simulation</title>
+  </header>
+  <script>
+  var dt = 1/60;
+  var clothMass = 1;
+  var clothSizeXY = 1;
+  var clothSizeZ = 1;
+  var nxy = 12;
+  var nz = 3;
+  var mass = clothMass / (nxy*nz);
+  var allData = [];
+
+    function loadCSV(targetFile){
+      // 読み込んだデータを1行ずつ格納する配列
+      //var allData = [];
+      // XMLHttpRequestの用意
+       var request = new XMLHttpRequest();
+       request.open("get", targetFile, false);
+       //request.open("get", targetFile, true);
+       request.overrideMimeType('sinking2/csv; charset=UTF-8');
+       request.send(null);
+
+       // 読み込んだCSVデータ
+       var csvData = request.responseText;
+       // CSVの全行を取得
+       var lines = csvData.split("\n");
+       for (var i = 0; i < lines.length; i++) {
+           // 1行ごとの処理
+           var wordSet = lines[i].split(",");
+           var wordData = {
+               px: ((parseFloat(wordSet[0]))),
+               py: ((parseFloat(wordSet[1]))),
+               pz: ((parseFloat(wordSet[2]))),
+           };
+           allData.push(wordData);
+       }
+       console.log(allData);
+    }
+    loadCSV("sinking2.csv");
+
+    // createXMLHttpRequest()
+    function createXMLHttpRequest() {
+      var XMLhttpObject = null;
+      XMLhttpObject = new XMLHttpRequest();
+      return XMLhttpObject;
+    }
+    // createXMLHttpRequest()-end
+
+    // clothFunction() 布の(u,v)位置の(x,y,z)座標を返す(ここでは円柱形)
+    function clothFunction(u, v) {
+      var z = v / 3;
+      var r = clothSizeXY / 5;
+      var y = -r * Math.cos(2 * Math.PI * u);
+      var x = -r * Math.sin(2 * Math.PI * u);
+      return new THREE.Vector3(x, y, z);
+    }
+  // clothFunction()- end
+
+  if ( ! Detector.webgl ) Detector.addGetWebGLMessage();
+  var container;
+  var camera, scene, renderer;
+  var clothGeometry;
+  var particles = [];
+  var csvArray = [];
+  var csvArray2 = [];
+  var world;
+  initCannon();
+  init();
+  animate();
+
+  // initCannon()
+  function initCannon(){
+    world = new CANNON.World();
+    world.broadphase = new CANNON.NaiveBroadphase();
+    world.solver.iterations = 20;
+
+    // Create cannon particles
+    for ( var i = 0; i < nxy; i++ ) {
+      particles.push([]);
+      for ( var j = 0; j < nz; j++ ) {
+        var p = clothFunction(i/nxy, j/nz); // 布形状の3次元座標ベクトルp
+        //var particle = new CANNON.Particle(j==(nz-1) ? 0 : mass);
+        var particle = new CANNON.Body({
+          mass: j==(nz-1)? 0:mass
+        });
+        particle.linearDamping = 0.5;
+        particle.position.set( p.x, p.y, p.z );
+        particles[i].push( particle );
+        world.addBody( particle );
+        particle.velocity.set( 0, 0, 0 );
+      }
+    }
+
+    // connect() 2つのparticleを接続する
+    function connect(i1,j1,i2,j2){
+      var p1 = particles[i1][j1];
+      var p2 = particles[i2][j2];
+      var d = p1.position.distanceTo(p2.position);
+      world.addConstraint( new CANNON.DistanceConstraint(p1,p2,d) );
+    }
+    // connect()-end
+
+    for(var i=0; i< nxy; i++){
+      for(var j=0; j< nz; j++){
+        connect(i,j,(i+1) % nxy,j);
+        if (j< nz-1) {
+          connect(i,j,i,(j+1) % nz);
+        }
+      }
+    }
+  }
+  // initCannon()-end
+
+  // init()
+  function init() {
+    container = document.createElement( 'div' );
+    document.body.appendChild( container );
+
+    // scene
+    scene = new THREE.Scene();
+    scene.fog = new THREE.Fog( 0x000000, 500, 10000 );
+
+    // camera
+    camera = new THREE.PerspectiveCamera( 45, window.innerWidth / window.innerHeight, 1, 10000 );
+    camera.position.set( 1, 0.7, 1 );
+    scene.add( camera );
+
+    // Controls
+    controls = new THREE.TrackballControls( camera );
+
+    // lights
+    var light = new THREE.DirectionalLight( 0xffffff, 1.75 );
+    light.position.set( 5, 5, 5 );
+    scene.add( light );
+
+    // cloth material
+    var clothTexture = THREE.ImageUtils.loadTexture('circuit_pattern2.png');
+
+    var clothMaterial = new THREE.MeshPhongMaterial( {
+      alphaTest: 0.5,
+      ambient: 0x000000,
+      color: 0xffffff,
+      specular: 0x333333,
+      emissive: 0x222222,
+      shininess: 5,
+      map: clothTexture,
+      side: THREE.DoubleSide
+    } );
+
+    // cloth geometry
+    clothGeometry = new THREE.ParametricGeometry( clothFunction, nxy, nz-1, true );
+    clothGeometry.dynamic = true;
+    clothGeometry.computeFaceNormals();
+
+    // cloth mesh
+    object = new THREE.Mesh( clothGeometry, clothMaterial );
+    object.position.set(0, 0, 0);
+    object.rotation.set(Math.PI/2, Math.PI, 0);
+    object.castShadow = true;
+    scene.add( object );
+
+    //var sphe_geo = new THREE.SphereGeometry(0.5,0.3,0.3);
+    //var sphe_mat = new THREE.MeshBasicMaterial({color: 0x000000});
+    //var sphere = new THREE.Mesh(sphe_geo,sphe_mat);
+    //sphere.position.set(1.326,-0.2546,0.00668);
+    //scene.add(sphere);
+
+    var axis = new THREE.AxisHelper(1000);
+    axis.position.set(0,0,0);
+    scene.add(axis);
+
+    renderer = new THREE.WebGLRenderer( { antialias: true } );
+    renderer.setSize( window.innerWidth, window.innerHeight );
+    renderer.setClearColor( 0x4682b4 );
+
+    container.appendChild( renderer.domElement );
+    window.addEventListener( 'resize', onWindowResize, false );
+    camera.lookAt( scene.position );
+  }
+  // init()-end
+
+  // onWindowResize()
+  function onWindowResize() {
+   camera.aspect = window.innerWidth / window.innerHeight;
+   camera.updateProjectionMatrix();
+   renderer.setSize( window.innerWidth, window.innerHeight );
+  }
+  // onWindowResiza()-end
+
+  // animate()
+  function animate() {
+    requestAnimationFrame( animate );
+    controls.update();
+    world.step(1/100);
+    world.gravity.set( 0, -Math.random()*5, -9.82 );
+    render();
+  }
+  // animate()-end
+
+  // render()
+  function render() {
+    var particle = new CANNON.Body({
+      mass: j==(nz-1)? 0 :mass
+    });
+    particle.linearDamping = 0.5;
+
+    for ( var i = 0; i <= nxy; i++ ) {
+      for ( var j = 0; j < nz; j++ ) {
+        var i2 = i % nxy;
+        var idx = j*(nxy+1) + i;
+        for ( var pcnt = 0; pcnt < 5192; pcnt+=8) {
+        clothGeometry.vertices[idx].copy(particles[i2][j].position);
+        //console.log(clothGeometry.vertices[0]);
+        }
+      }
+    }
+    
+    clothGeometry.computeFaceNormals();
+    clothGeometry.computeVertexNormals();
+    clothGeometry.normalsNeedUpdate = true;
+    clothGeometry.verticesNeedUpdate = true;
+    renderer.render( scene, camera );
+  }
+  // render()-end
+</script>
+</body>
+</html>

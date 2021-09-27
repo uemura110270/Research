@@ -1,0 +1,257 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,user-scalable=no,minimum-scale=1.0,maximum-scale=1.0">
+
+  <style>
+  body {
+    font-family: Monospace;
+    background-color: #000;
+    color: #000;
+    margin: 0px;
+    overflow: hidden;
+  }
+  #info {
+    text-align: center;
+    padding: 10px;
+    z-index: 10;
+    width: 100%;
+    position: absolute;
+  }
+  a {
+    text-decoration: underline;
+    cursor: pointer;
+  }
+  </style>
+  <script src="./libs/Three.js"></script>
+  <script src="./libs/TrackballControls.js"></script>
+  <script src="./libs/Detector.js"></script>
+  <script src="./build/cannon.js"></script>
+</head>
+<body>
+  <header>
+    <title>Cloth Suitei</title>
+  </header>
+  <script>
+  var dt = 1/60;
+  var clothMass = 1;
+  var clothSizeXY = 1;
+  var clothSizeZ = 1;
+  var nxy = 10;
+  var nz = 10;
+  var mass = clothMass / (nxy*nz);
+  var allData = [];
+  var DAMPING = 0.03;
+  var DRAG = 1 - DAMPING;
+  var MASS = 0.1;
+  var restDistance = 25;
+
+  ///////////////////////////////////////////////
+  function loadCSV(targetFile){
+    // 読み込んだデータを1行ずつ格納する配列
+     // XMLHttpRequestの用意
+    var request = new XMLHttpRequest();
+    request.open("get", targetFile, false);
+  //     request.open("get", targetFile, true);
+    request.overrideMimeType('cloth_particles5/csv; charset=UTF-8');
+    request.send(null);
+
+     // 読み込んだCSVデータ
+    var csvData = request.responseText;
+
+     // CSVの全行を取得
+    var lines = csvData.split("\n");
+
+    for (var i = 0; i < lines.length; i++) {
+      // 1行ごとの処理
+
+      var wordSet = lines[i].split(",");
+
+      var wordData = {
+            px: ((parseFloat(wordSet[0]))),
+            py: ((parseFloat(wordSet[1]))),
+            pz: ((parseFloat(wordSet[2]))),
+          };
+
+          allData.push(wordData);
+    }
+    console.log(allData);
+  }
+  loadCSV("cloth_particles5.csv")
+  //loadCSV("floating.csv");
+  ///////////////////////////////////////////////
+
+  // createXMLHttpRequest()
+  function createXMLHttpRequest() {
+    var XMLhttpObject = null;
+    XMLhttpObject = new XMLHttpRequest();
+    return XMLhttpObject;
+  }
+
+    function clothFunction(u, v) {
+      var z = 0;
+      var y = (v * 250)-125;
+      var x = (u * 250)-125;
+      return new THREE.Vector3(x, y, z);
+    }
+  // clothFunction()- end
+
+  if ( ! Detector.webgl ) Detector.addGetWebGLMessage();
+  var container;
+  var camera, scene, renderer;
+  var clothGeometry;
+  var sphe_geo;
+  var particles = [];
+  var world;
+  initCannon();
+  init();
+  animate();
+
+  // initCannon()
+  function initCannon(){
+    world = new CANNON.World();
+    world.broadphase = new CANNON.NaiveBroadphase();
+    world.solver.iterations = 20;
+
+    // Create cannon particles
+    for ( var i = 0; i <= nxy; i++ ) {
+      particles.push([]);
+      for ( var j = 0; j <= nz; j++ ) {
+        var p = clothFunction(i/(nxy-1), j/(nz-2)); // 紐状の3次元座標ベクトルp
+        var particle = new CANNON.Body({
+          MASS: j==(nz-1)? 0:MASS
+        });
+        particle.linearDamping = 0.97; //ばね定数
+        particle.position.set( p.x, p.y, p.z );
+        particles[i].push( particle );
+        world.addBody( particle );
+        particle.velocity.set( 0, 0, 0 );
+      }
+    }
+
+    // connect() 2つのparticleを接続する
+    function connect(i1,j1,i2,j2){
+      var p1 = particles[i1][j1];
+      var p2 = particles[i2][j2];
+      var d = p1.position.distanceTo(p2.position);
+      world.addConstraint( new CANNON.DistanceConstraint(p1,p2,d) );
+    }
+    // connect()-end
+
+    for(var i=0; i<= nxy; i++){
+      for(var j=0; j<= nz; j++){
+        connect(i,j,(i+1) % nxy,j);
+        if (j< nz-1) {
+          connect(i,j,i,(j+1) % nz);
+        }
+      }
+    }
+  }
+  // initCannon()-end
+
+  // init()
+  function init() {
+    container = document.createElement( 'div' );
+    document.body.appendChild( container );
+
+    // scene
+    scene = new THREE.Scene();
+    scene.fog = new THREE.Fog( 0x000000, 500, 10000 );
+
+    // camera
+    camera = new THREE.PerspectiveCamera( 30, window.innerWidth / window.innerHeight, 1, 10000 );
+    camera.position.set( -1000, 50, 1500 );
+    scene.add( camera );
+
+    // Controls
+    controls = new THREE.TrackballControls( camera );
+
+    // lights
+    var light = new THREE.DirectionalLight( 0xffffff, 1.75 );
+    light.position.set( 5, 5, 5 );
+    scene.add( light );
+
+    // cloth material
+    var clothTexture = THREE.ImageUtils.loadTexture('circuit_pattern2.png');
+    var clothMaterial = new THREE.MeshPhongMaterial( {
+      alphaTest: 0.5,
+      //ambient: 0x000000,
+      color: 0x000000,
+      //specular: 0x333333,
+      //emissive: 0x222222,
+      shininess: 5,
+      //map: clothTexture,
+      //side: THREE.DoubleSide
+    } );
+    // cloth geometry
+    clothGeometry = new THREE.ParametricGeometry( clothFunction, nxy, nz-1 );
+    clothGeometry.dynamic = true;
+    clothGeometry.computeFaceNormals();
+    // cloth mesh
+    object = new THREE.Mesh( clothGeometry, clothMaterial );
+    object.position.set(0, -25, 0);
+    object.castShadow = true;
+    //scene.add( object );
+
+    var axis = new THREE.AxisHelper(1000);
+    axis.position.set(0,0,0);
+    //scene.add(axis);
+
+    renderer = new THREE.WebGLRenderer( { antialias: true } );
+    renderer.setSize( window.innerWidth, window.innerHeight );
+    renderer.setClearColor( 0x000000 );
+
+    container.appendChild( renderer.domElement );
+    window.addEventListener( 'resize', onWindowResize, false );
+    camera.lookAt( scene.position );
+  }
+  // init()-end
+
+  // onWindowResize()
+  function onWindowResize() {
+   camera.aspect = window.innerWidth / window.innerHeight;
+   camera.updateProjectionMatrix();
+   renderer.setSize( window.innerWidth, window.innerHeight );
+  }
+  // onWindowResiza()-end
+
+  // animate()
+  function animate() {
+    requestAnimationFrame( animate );
+    controls.update();
+    world.step(1/100);
+    world.gravity.set( 0, -981*1.4, 0 );
+    render();
+  }
+  // animate()-end
+
+  var sphere1;
+  var line;
+  // render()
+  function render() {
+    var s_mate = new THREE.MeshBasicMaterial({color:0xffff55});
+    var mate = new THREE.MeshBasicMaterial({color:0x000000});
+    var s_geo = new THREE.SphereGeometry(1.0, 10 ,10);
+    sphere = new THREE.Mesh(s_geo,mate);
+    scene.add(sphere);
+
+    for ( var i = 0; i <= nxy; i++ ) {
+      for ( var j = 0; j < nz; j++ ) {
+        var i2 = i % nxy;
+        var idx = j*(nxy+1) + i;
+        clothGeometry.vertices[idx].copy(particles[i2][j].position);
+      }
+    }
+    for( var i = 0; i <= 121; i++ ){
+      sphere1 = new THREE.Mesh(s_geo,s_mate);
+      sphere1.position.copy(new THREE.Vector3(allData[i].px,allData[i].py,allData[i].pz));
+      scene.add(sphere1);
+      //console.log(sphere1.position);
+    }
+    renderer.render( scene, camera );
+  }
+  // render()-end
+</script>
+</body>
+</html>

@@ -1,0 +1,273 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,user-scalable=no,minimum-scale=1.0,maximum-scale=1.0">
+  <style>
+  body {
+    font-family: Monospace;
+    background-color: #000;
+    color: #000;
+    margin: 0px;
+    overflow: hidden;
+  }
+  #info {
+    text-align: center;
+    padding: 10px;
+    z-index: 10;
+    width: 100%;
+    position: absolute;
+  }
+  a {
+    text-decoration: underline;
+    cursor: pointer;
+  }
+  </style>
+  <script src="./libs/Three.js"></script>
+  <script src="./libs/TrackballControls.js"></script>
+  <script src="./libs/Detector.js"></script>
+  <script src="./build/cannon.js"></script>
+</head>
+<body>
+  <header>
+    <title>Virtual object</title>
+  </header>
+  <script>
+  var dt = 1/60;
+  var clothMass = 1;
+  var clothSizeXY = 1;
+  var clothSizeZ = 1;
+  var nxy = 10;　//質点の数（x方向）
+  var nz = 1;  //質点の数　（y方向）
+  var mass = clothMass / (nxy*nz);
+  var allData = [];
+  var n=0;
+  function loadCSV(targetFile){//csvファイルから読み込んだマーカーの二次元座標を取得
+    // 読み込んだデータを1行ずつ格納する配列
+     // XMLHttpRequestの用意
+    var request = new XMLHttpRequest();
+    request.open("get", targetFile, false);
+  //     request.open("get", targetFile, true);
+    request.overrideMimeType('cylinder_position/csv; charset=UTF-8');
+    request.send(null);
+     // 読み込んだCSVデータ
+    var csvData = request.responseText;
+     // CSVの全行を取得
+    var lines = csvData.split("\n");
+    var wordData=new Array(lines.length)
+    for (var i = 0; i < lines.length-1; i++) {
+      // 1行ごとの処理
+     wordData[i] = new Array(10);
+      for(let y = 0; y < 10; y++) {
+        wordData[i][y] = new Array(3).fill(0);
+      }
+      var wordSet = lines[i].split(",");
+      for(var j = 0; j <(wordSet.length)/2; j++) {
+        wordData[i][j][0] = parseFloat(wordSet[j*2])
+        wordData[i][j][1] = parseFloat(wordSet[j*2+1])
+      }
+    }
+    return wordData;
+  }
+    // 紐の(u,v)位置の(x,y,z)座標を返す
+    function kyokusenn(u, v) {
+      var z = 0;
+      var y = v;
+      var x = u;
+      return new THREE.Vector3(x, y, z);
+    }
+  // clothFunction()- end
+  if ( ! Detector.webgl ) Detector.addGetWebGLMessage();
+  var container;
+  var camera, scene, renderer;
+  //var clothGeometry;
+  var sphe_geo;
+  var particles = [];
+  var world;
+  initCannon();
+  var data=loadCSV('movie_005.csv')
+  var sphere=init(data);
+  var n=0;
+  var len=data[0].length;
+  animate(sphere);
+  // initCannon()
+  function initCannon(){
+
+    world = new CANNON.World(); // 物理世界を生成
+    world.broadphase = new CANNON.NaiveBroadphase();  //ぶつかっている可能性のあるオブジェクト同士を見つける
+    world.solver.iterations = 20;  // 反復計算回数
+    //質点を生成しmass-springのパラメータを調整している
+    // Create cannon particles
+    for ( var i = 0; i < nxy; i++ ) {
+       particles.push([]); //particlesに配列を追加
+      for ( var j = 0; j < nz; j++ ) {
+        var p = kyokusenn(i/nxy, j/nz); // 紐状の3次元座標ベクトルp
+        sphereMat = new CANNON.Material('sphereMat');
+        //var particle = new CANNON.Particle(j==(nz-1) ? 0 : mass);
+        var particle = new CANNON.Body({  //質量のある物体を取得(massは重さ)
+          mass: j==(nz-1)? 0:mass
+        });
+      /////パラメータ調整
+        particle.linearDamping = 0.5; //ばね定数
+        n=n+1;
+        particle.position.set(n,n,n);
+        //particle.position.set( p.x, p.y, p.z );
+        particles[i].push( particle ); //particlesにparticleを追加
+        world.addBody( particle ); //worldにparticleを追加
+        particle.velocity.set( 0, 0, 0 );  // 角速度設定
+      }
+    }
+    // connect() 2つのparticleを接続する
+    function connect(i1,j1,i2,j2){
+      var p1 = particles[i1][j1];
+      var p2 = particles[i2][j2];
+      var d = p1.position.distanceTo(p2.position);
+      world.addConstraint( new CANNON.DistanceConstraint(p1,p2,d) );
+    }
+    // connect()-end
+    for(var i=0; i< nxy; i++){
+      for(var j=0; j< nz; j++){
+        connect(i,j,(i+1) % nxy,j); //x方向の隣接する点をつなぐ
+        if (j< nz-1) {
+          connect(i,j,i,(j+1) % nz);//y方向の隣接する点をつなぐ
+        }
+      }
+    }
+  }
+  // initCannon()-end
+  function sleep(waitMsec) {
+  var startMsec = new Date();
+  // 指定ミリ秒間だけループさせる（CPUは常にビジー状態）
+  while (new Date() - startMsec < waitMsec);
+}
+  // init()
+  function init(data) {
+    container = document.createElement( 'div' );
+    document.body.appendChild( container );
+    // scene
+    scene = new THREE.Scene();
+    scene.fog = new THREE.Fog( 0x000000, 500, 10000 );
+    //sphere
+    var num=data.length;
+    var sphere=kyokusenn(data,0);
+    for(var i=0;i<len;i++){
+      scene.add(sphere[i]);
+    }
+    // camera
+    camera = new THREE.PerspectiveCamera( 45, window.innerWidth / window.innerHeight, 0.1, 100 );
+    camera.position.set( 0, 0, 40 );
+    console.log(sphere[9].position)
+    camera.lookAt(new THREE.Vector3(20 , 20, 0));
+    scene.add( camera );
+    // Controls
+    controls = new THREE.TrackballControls( camera );//カメラ移動
+    // lights
+    var light = new THREE.DirectionalLight( 0xffffff, 1.75 );
+    light.position.set( 5, 5, 5 );
+    scene.add( light );
+    
+    function kyokusenn(data,num){
+      var point01 = new THREE.Vector3(-6.0,0,0.1);
+      var point02 = new THREE.Vector3(1,-15.75,0.1);
+      var point03 = new THREE.Vector3(6.0,-16.0,0.1);
+      var curve = new THREE.QuadraticBezierCurve3( point01, point02, point03 );//point01-03を通る曲線を描く
+      var geometry = new THREE.Geometry();
+      geometry.vertices = curve.getPoints(10);//作成したcurveを何点で通るか
+      var curvePoints = curve.getPoints(10);
+      var s_mate = new THREE.MeshBasicMaterial({color:0xffff55});
+      var s_geo = new THREE.SphereGeometry(0.5, 5 ,5);
+      var sphere=new Array(len)
+      var len =data[0].length;
+
+      for(var j = 0; j <len; j++){
+        sphere[j] = new THREE.Mesh(s_geo,s_mate);
+
+        //console.log(data[i][j])
+        sphere[j].position.set(data[num][j][0]/20,-data[num][j][1]/20,data[num][j][2]); //sphereの中心座標をセット
+
+        //scene.add(sphere[j]);　//sphereの追加
+      }
+      var material = new THREE.LineBasicMaterial({color:0x00ffff});
+      material.linewidth = 2;
+      var curveObject = new THREE.Line(geometry,material);
+      //scene.add(curveObject);
+      for(var i =0; i<len;i++){
+      scene.add(sphere[i])
+      }
+      
+      function connect(i){
+      var p1 = sphere[i]
+      var p2 = sphere[i+1]
+      var d = p1.position.distanceTo(p2.position);
+      console.log("距離p1,p2",d)
+      //world.addConstraint( new CANNON.DistanceConstraint(p1,p2,d) );
+    }
+    // connect()-end
+
+    for(var i=0; i< len-1; i++){
+        //connect(i);
+    }
+      return sphere;
+
+    }
+    //XYZ軸の作成
+    var axis = new THREE.AxisHelper(1000);
+    axis.position.set(0,0,0);
+    scene.add(axis);
+    renderer = new THREE.WebGLRenderer( { antialias: true } );// レンダラーの生成
+    renderer.setSize( window.innerWidth, window.innerHeight );// レンダラーのサイズをdivのサイズに設定
+    renderer.setClearColor( 0x000000 ); // レンダラーの背景色を黒色（不透過）に設定
+    container.appendChild( renderer.domElement );
+    window.addEventListener( 'resize', onWindowResize, false );
+    camera.lookAt( scene.position );
+    return sphere;
+  }
+  // init()-end
+  // onWindowResize()
+  function onWindowResize() {
+   camera.aspect = window.innerWidth / window.innerHeight;
+   camera.updateProjectionMatrix();
+   renderer.setSize( window.innerWidth, window.innerHeight );
+  }
+  // onWindowResiza()-end
+  // animate()
+  function animate() { //オブジェクトは動かないがカメラを動かすためアニメーションしている
+    requestAnimationFrame( animate ); //animateを繰り返す
+    controls.update();
+    world.step(1/60);
+    n+=1;
+    var num = data.length;
+    if(num<n){
+      n=1;
+    }
+    /* 質点の座標変換*/
+    for (var i = 0;i<len;i++){
+      sphere[i].position.set(data[n][i][0]/20,-data[n][i][1]/20,data[n][i][2]/20);
+    }
+    
+    //world.gravity.set( 0, -Math.random()*5, -9.82 );
+    render();
+  }
+  // animate()-end
+  // render()
+  function render() {
+    var particle = new CANNON.Body({
+      mass: j==(nz-1)? 0 :mass
+    });
+    particle.linearDamping = 0.5;
+    for ( var i = 0; i <= nxy; i++ ) {
+      for ( var j = 0; j < nz; j++ ) {
+        var i2 = i % nxy;
+        var idx = j*(nxy+1) + i;
+        for ( var pcnt = 0; pcnt < 5192; pcnt+=8) {
+        //geometry.vertices[idx].copy(particles[i2][j].position);
+        //console.log(clothGeometry.vertices[0]);
+        }
+      }
+    }
+    renderer.render( scene, camera );
+  }
+  // render()-end
+</script>
+</body>
+</html>

@@ -1,0 +1,618 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,user-scalable=no,minimum-scale=1.0,maximum-scale=1.0">
+
+  <style>
+  body {
+    font-family: Monospace;
+    background-color: #000;
+    color: #000;
+    margin: 0px;
+    overflow: hidden;
+  }
+  #info {
+    text-align: center;
+    padding: 10px;
+    z-index: 10;
+    width: 100%;
+    position: absolute;
+  }
+  a {
+    text-decoration: underline;
+    cursor: pointer;
+  }
+  </style>
+  <script src="./libs/Three.js"></script>
+  <script src="./libs/TrackballControls.js"></script>
+  <script src="./libs/Detector.js"></script>
+  <script src="./build/cannon.js"></script>
+</head>
+<body>
+  <header>
+    <title>Cloth Suitei</title>
+  </header>
+  <script>
+  var dt = 1/60;
+  var clothMass = 1;
+  var clothSizeXY = 1;
+  var clothSizeZ = 1;
+  var nxy = 10;
+  var nz = 10;
+  var mass = clothMass / (nxy*nz);
+  var allData = [];
+  var DAMPING = 0.03;
+  var DRAG = 1 - DAMPING;
+  var MASS = 0.1;
+  var restDistance = 25;
+
+  ///////////////////////////////////////////////
+  function loadCSV(targetFile){
+    // 読み込んだデータを1行ずつ格納する配列
+     // XMLHttpRequestの用意
+    var request = new XMLHttpRequest();
+    request.open("get", targetFile, false);
+  //     request.open("get", targetFile, true);
+    request.overrideMimeType('cloh_moving/csv; charset=UTF-8');
+    request.send(null);
+
+     // 読み込んだCSVデータ
+    var csvData = request.responseText;
+
+     // CSVの全行を取得
+    var lines = csvData.split("\n");
+
+    for (var i = 0; i < lines.length; i++) {
+      // 1行ごとの処理
+
+      var wordSet = lines[i].split(",");
+
+      var wordData = {
+            px: ((parseFloat(wordSet[0]))),
+            py: ((parseFloat(wordSet[1]))),
+            pz: ((parseFloat(wordSet[2]))),
+          };
+
+          allData.push(wordData);
+    }
+    console.log(allData);
+  }
+  loadCSV("cloh_moving.csv")
+  //loadCSV("floating.csv");
+  ///////////////////////////////////////////////
+
+  // createXMLHttpRequest()
+  function createXMLHttpRequest() {
+    var XMLhttpObject = null;
+    XMLhttpObject = new XMLHttpRequest();
+    return XMLhttpObject;
+  }
+
+    function clothFunction(u, v) {
+      var z = 0;
+      var y = (v * 250)-125;
+      var x = (u * 250)-125;
+      return new THREE.Vector3(x, y, z);
+    }
+  // clothFunction()- end
+
+  if ( ! Detector.webgl ) Detector.addGetWebGLMessage();
+  var container;
+  var camera, scene, renderer;
+  var clothGeometry;
+  var sphe_geo;
+  var particles = [];
+  var world;
+  initCannon();
+  init();
+  animate();
+
+  // initCannon()
+  function initCannon(){
+    world = new CANNON.World();
+    world.broadphase = new CANNON.NaiveBroadphase();
+    world.solver.iterations = 20;
+
+    // Create cannon particles
+    for ( var i = 0; i < nxy; i++ ) {
+      particles.push([]);
+      for ( var j = 0; j < nz; j++ ) {
+        var p = clothFunction(i/nxy, j/nz); // 紐状の3次元座標ベクトルp
+        var particle = new CANNON.Body({
+          mass: j==(nz-1)? 0:mass
+        });
+        particle.linearDamping = 0.5; //ばね定数
+        particle.position.set( p.x, p.y, p.z );
+        particles[i].push( particle );
+        world.addBody( particle );
+        particle.velocity.set( 0, 0, 0 );
+      }
+    }
+
+    // connect() 2つのparticleを接続する
+    function connect(i1,j1,i2,j2){
+      var p1 = particles[i1][j1];
+      var p2 = particles[i2][j2];
+      var d = p1.position.distanceTo(p2.position);
+      world.addConstraint( new CANNON.DistanceConstraint(p1,p2,d) );
+    }
+    // connect()-end
+
+    for(var i=0; i< nxy; i++){
+      for(var j=0; j< nz; j++){
+        connect(i,j,(i+1) % nxy,j);
+        if (j< nz-1) {
+          connect(i,j,i,(j+1) % nz);
+        }
+      }
+    }
+  }
+  // initCannon()-end
+
+  // init()
+  function init() {
+    container = document.createElement( 'div' );
+    document.body.appendChild( container );
+
+    // scene
+    scene = new THREE.Scene();
+    scene.fog = new THREE.Fog( 0x000000, 500, 10000 );
+
+    // camera
+    camera = new THREE.PerspectiveCamera( 30, window.innerWidth / window.innerHeight, 1, 10000 );
+    camera.position.set( 1000, 50, 1500 );
+    scene.add( camera );
+
+    // Controls
+    controls = new THREE.TrackballControls( camera );
+
+    // lights
+    var light = new THREE.DirectionalLight( 0xffffff, 1.75 );
+    light.position.set( 5, 5, 5 );
+    scene.add( light );
+
+    // cloth material
+    var clothTexture = THREE.ImageUtils.loadTexture('circuit_pattern2.png');
+    var clothMaterial = new THREE.MeshPhongMaterial( {
+      alphaTest: 0.5,
+      //ambient: 0x000000,
+      color: 0xffffff,
+      //specular: 0x333333,
+      //emissive: 0x222222,
+      shininess: 5,
+      //map: clothTexture,
+      //side: THREE.DoubleSide
+    } );
+    // cloth geometry
+    clothGeometry = new THREE.ParametricGeometry( clothFunction, nxy, nz );
+    clothGeometry.dynamic = true;
+    clothGeometry.computeFaceNormals();
+    // cloth mesh
+    object = new THREE.Mesh( clothGeometry, clothMaterial );
+    object.position.set(0, 0, 0);
+    object.castShadow = true;
+    //scene.add( object );
+
+    var axis = new THREE.AxisHelper(1000);
+    axis.position.set(0,0,0);
+    scene.add(axis);
+
+    renderer = new THREE.WebGLRenderer( { antialias: true } );
+    renderer.setSize( window.innerWidth, window.innerHeight );
+    renderer.setClearColor( 0x000000 );
+
+    container.appendChild( renderer.domElement );
+    window.addEventListener( 'resize', onWindowResize, false );
+    camera.lookAt( scene.position );
+  }
+  // init()-end
+
+  // onWindowResize()
+  function onWindowResize() {
+   camera.aspect = window.innerWidth / window.innerHeight;
+   camera.updateProjectionMatrix();
+   renderer.setSize( window.innerWidth, window.innerHeight );
+  }
+  // onWindowResiza()-end
+
+  // animate()
+  function animate() {
+    requestAnimationFrame( animate );
+    controls.update();
+    world.step(1/10);
+    world.gravity.set( 0, -981*1.4, 0 );
+    render();
+  }
+  // animate()-end
+
+  var sphere;
+  var lines;
+  // render()
+  function render() {
+    var s_mate = new THREE.MeshBasicMaterial({color:0xffff55});
+    var s_geo = new THREE.SphereGeometry(1.0, 10 ,10);
+    var material = new THREE.LineBasicMaterial({color:0x00ffff});
+    var geometry = new THREE.Geometry();
+
+    for ( var i = 0; i <= nxy; i++ ) {
+      for ( var j = 0; j < nz; j++ ) {
+        var i2 = i % nxy;
+        var idx = j*(nxy+1) + i;
+        clothGeometry.vertices[idx].copy(particles[i2][j].position);
+      }
+    }
+    for( var i = 0; i <= 726; i+=11 ){
+      sphere1 = new THREE.Mesh(s_geo,s_mate);
+      sphere2 = new THREE.Mesh(s_geo,s_mate);
+      sphere3 = new THREE.Mesh(s_geo,s_mate);
+      sphere4 = new THREE.Mesh(s_geo,s_mate);
+      sphere5 = new THREE.Mesh(s_geo,s_mate);
+      sphere6 = new THREE.Mesh(s_geo,s_mate);
+      sphere7 = new THREE.Mesh(s_geo,s_mate);
+      sphere8 = new THREE.Mesh(s_geo,s_mate);
+      sphere9 = new THREE.Mesh(s_geo,s_mate);
+      sphere10 = new THREE.Mesh(s_geo,s_mate);
+      sphere11 = new THREE.Mesh(s_geo,s_mate);
+      sphere12 = new THREE.Mesh(s_geo,s_mate);
+      sphere13 = new THREE.Mesh(s_geo,s_mate);
+      sphere14 = new THREE.Mesh(s_geo,s_mate);
+      sphere15 = new THREE.Mesh(s_geo,s_mate);
+      sphere16 = new THREE.Mesh(s_geo,s_mate);
+      sphere17 = new THREE.Mesh(s_geo,s_mate);
+      sphere18 = new THREE.Mesh(s_geo,s_mate);
+      sphere19 = new THREE.Mesh(s_geo,s_mate);
+      sphere20 = new THREE.Mesh(s_geo,s_mate);
+      sphere21 = new THREE.Mesh(s_geo,s_mate);
+      sphere22 = new THREE.Mesh(s_geo,s_mate);
+      sphere23 = new THREE.Mesh(s_geo,s_mate);
+      sphere24 = new THREE.Mesh(s_geo,s_mate);
+      sphere25 = new THREE.Mesh(s_geo,s_mate);
+      sphere26 = new THREE.Mesh(s_geo,s_mate);
+      sphere27 = new THREE.Mesh(s_geo,s_mate);
+      sphere28 = new THREE.Mesh(s_geo,s_mate);
+      sphere29 = new THREE.Mesh(s_geo,s_mate);
+      sphere30 = new THREE.Mesh(s_geo,s_mate);
+      sphere31 = new THREE.Mesh(s_geo,s_mate);
+      sphere32 = new THREE.Mesh(s_geo,s_mate);
+      sphere33 = new THREE.Mesh(s_geo,s_mate);
+      sphere34 = new THREE.Mesh(s_geo,s_mate);
+      sphere35 = new THREE.Mesh(s_geo,s_mate);
+      sphere36 = new THREE.Mesh(s_geo,s_mate);
+      sphere37 = new THREE.Mesh(s_geo,s_mate);
+      sphere38 = new THREE.Mesh(s_geo,s_mate);
+      sphere39 = new THREE.Mesh(s_geo,s_mate);
+      sphere40 = new THREE.Mesh(s_geo,s_mate);
+      sphere41 = new THREE.Mesh(s_geo,s_mate);
+      sphere42 = new THREE.Mesh(s_geo,s_mate);
+      sphere43 = new THREE.Mesh(s_geo,s_mate);
+      sphere44 = new THREE.Mesh(s_geo,s_mate);
+      sphere45 = new THREE.Mesh(s_geo,s_mate);
+      sphere46 = new THREE.Mesh(s_geo,s_mate);
+      sphere47 = new THREE.Mesh(s_geo,s_mate);
+      sphere48 = new THREE.Mesh(s_geo,s_mate);
+      sphere49 = new THREE.Mesh(s_geo,s_mate);
+      sphere50 = new THREE.Mesh(s_geo,s_mate);
+      sphere51 = new THREE.Mesh(s_geo,s_mate);
+      sphere52 = new THREE.Mesh(s_geo,s_mate);
+      sphere53 = new THREE.Mesh(s_geo,s_mate);
+      sphere54 = new THREE.Mesh(s_geo,s_mate);
+      sphere55 = new THREE.Mesh(s_geo,s_mate);
+      sphere56 = new THREE.Mesh(s_geo,s_mate);
+      sphere57 = new THREE.Mesh(s_geo,s_mate);
+      sphere58 = new THREE.Mesh(s_geo,s_mate);
+      sphere59 = new THREE.Mesh(s_geo,s_mate);
+      sphere60 = new THREE.Mesh(s_geo,s_mate);
+      sphere61 = new THREE.Mesh(s_geo,s_mate);
+      sphere62 = new THREE.Mesh(s_geo,s_mate);
+      sphere63 = new THREE.Mesh(s_geo,s_mate);
+      sphere64 = new THREE.Mesh(s_geo,s_mate);
+      sphere65 = new THREE.Mesh(s_geo,s_mate);
+      sphere66 = new THREE.Mesh(s_geo,s_mate);
+      sphere67 = new THREE.Mesh(s_geo,s_mate);
+      sphere68 = new THREE.Mesh(s_geo,s_mate);
+      sphere69 = new THREE.Mesh(s_geo,s_mate);
+      sphere70 = new THREE.Mesh(s_geo,s_mate);
+      sphere71 = new THREE.Mesh(s_geo,s_mate);
+      sphere72 = new THREE.Mesh(s_geo,s_mate);
+      sphere73 = new THREE.Mesh(s_geo,s_mate);
+      sphere74 = new THREE.Mesh(s_geo,s_mate);
+      sphere75 = new THREE.Mesh(s_geo,s_mate);
+      sphere76 = new THREE.Mesh(s_geo,s_mate);
+      sphere77 = new THREE.Mesh(s_geo,s_mate);
+      sphere78 = new THREE.Mesh(s_geo,s_mate);
+      sphere79 = new THREE.Mesh(s_geo,s_mate);
+      sphere80 = new THREE.Mesh(s_geo,s_mate);
+      sphere81 = new THREE.Mesh(s_geo,s_mate);
+      sphere82 = new THREE.Mesh(s_geo,s_mate);
+      sphere83 = new THREE.Mesh(s_geo,s_mate);
+      sphere84 = new THREE.Mesh(s_geo,s_mate);
+      sphere85 = new THREE.Mesh(s_geo,s_mate);
+      sphere86 = new THREE.Mesh(s_geo,s_mate);
+      sphere87 = new THREE.Mesh(s_geo,s_mate);
+      sphere88 = new THREE.Mesh(s_geo,s_mate);
+      sphere89 = new THREE.Mesh(s_geo,s_mate);
+      sphere90 = new THREE.Mesh(s_geo,s_mate);
+      sphere91 = new THREE.Mesh(s_geo,s_mate);
+      sphere92 = new THREE.Mesh(s_geo,s_mate);
+      sphere93 = new THREE.Mesh(s_geo,s_mate);
+      sphere94 = new THREE.Mesh(s_geo,s_mate);
+      sphere95 = new THREE.Mesh(s_geo,s_mate);
+      sphere96 = new THREE.Mesh(s_geo,s_mate);
+      sphere97 = new THREE.Mesh(s_geo,s_mate);
+      sphere98 = new THREE.Mesh(s_geo,s_mate);
+      sphere99 = new THREE.Mesh(s_geo,s_mate);
+      sphere100 = new THREE.Mesh(s_geo,s_mate);
+      sphere101 = new THREE.Mesh(s_geo,s_mate);
+      sphere102 = new THREE.Mesh(s_geo,s_mate);
+      sphere103 = new THREE.Mesh(s_geo,s_mate);
+      sphere104 = new THREE.Mesh(s_geo,s_mate);
+      sphere105 = new THREE.Mesh(s_geo,s_mate);
+      sphere106 = new THREE.Mesh(s_geo,s_mate);
+      sphere107 = new THREE.Mesh(s_geo,s_mate);
+      sphere108 = new THREE.Mesh(s_geo,s_mate);
+      sphere109 = new THREE.Mesh(s_geo,s_mate);
+      sphere110 = new THREE.Mesh(s_geo,s_mate);
+      sphere111 = new THREE.Mesh(s_geo,s_mate);
+      sphere112 = new THREE.Mesh(s_geo,s_mate);
+      sphere113 = new THREE.Mesh(s_geo,s_mate);
+      sphere114 = new THREE.Mesh(s_geo,s_mate);
+      sphere115 = new THREE.Mesh(s_geo,s_mate);
+      sphere116 = new THREE.Mesh(s_geo,s_mate);
+      sphere117 = new THREE.Mesh(s_geo,s_mate);
+      sphere118 = new THREE.Mesh(s_geo,s_mate);
+      sphere119 = new THREE.Mesh(s_geo,s_mate);
+      sphere120 = new THREE.Mesh(s_geo,s_mate);
+      sphere121 = new THREE.Mesh(s_geo,s_mate);
+
+      sphere1.position.copy(new THREE.Vector3(allData[i].px,allData[i].py,allData[i].pz));
+      sphere2.position.copy(new THREE.Vector3(allData[i+1].px,allData[i+1].py,allData[i+1].pz));
+      sphere3.position.copy(new THREE.Vector3(allData[i+2].px,allData[i+2].py,allData[i+2].pz));
+      sphere4.position.copy(new THREE.Vector3(allData[i+3].px,allData[i+3].py,allData[i+3].pz));
+      sphere5.position.copy(new THREE.Vector3(allData[i+4].px,allData[i+4].py,allData[i+4].pz));
+      sphere6.position.copy(new THREE.Vector3(allData[i+5].px,allData[i+5].py,allData[i+5].pz));
+      sphere7.position.copy(new THREE.Vector3(allData[i+6].px,allData[i+6].py,allData[i+6].pz));
+      sphere8.position.copy(new THREE.Vector3(allData[i+7].px,allData[i+7].py,allData[i+7].pz));
+      sphere9.position.copy(new THREE.Vector3(allData[i+8].px,allData[i+8].py,allData[i+8].pz));
+      sphere10.position.copy(new THREE.Vector3(allData[i+9].px,allData[i+9].py,allData[i+9].pz));
+      sphere11.position.copy(new THREE.Vector3(allData[i+10].px,allData[i+10].py,allData[i+10].pz));
+      sphere12.position.copy(new THREE.Vector3(allData[i+11].px,allData[i+11].py,allData[i+11].pz));
+      sphere13.position.copy(new THREE.Vector3(allData[i+12].px,allData[i+12].py,allData[i+12].pz));
+      sphere14.position.copy(new THREE.Vector3(allData[i+13].px,allData[i+13].py,allData[i+13].pz));
+      sphere15.position.copy(new THREE.Vector3(allData[i+14].px,allData[i+14].py,allData[i+14].pz));
+      sphere16.position.copy(new THREE.Vector3(allData[i+15].px,allData[i+15].py,allData[i+15].pz));
+      sphere17.position.copy(new THREE.Vector3(allData[i+16].px,allData[i+16].py,allData[i+16].pz));
+      sphere18.position.copy(new THREE.Vector3(allData[i+17].px,allData[i+17].py,allData[i+17].pz));
+      sphere19.position.copy(new THREE.Vector3(allData[i+18].px,allData[i+18].py,allData[i+18].pz));
+      sphere20.position.copy(new THREE.Vector3(allData[i+19].px,allData[i+19].py,allData[i+19].pz));
+      sphere21.position.copy(new THREE.Vector3(allData[i+20].px,allData[i+20].py,allData[i+20].pz));
+      sphere22.position.copy(new THREE.Vector3(allData[i+21].px,allData[i+21].py,allData[i+21].pz));
+      sphere23.position.copy(new THREE.Vector3(allData[i+22].px,allData[i+22].py,allData[i+22].pz));
+      sphere24.position.copy(new THREE.Vector3(allData[i+23].px,allData[i+23].py,allData[i+23].pz));
+      sphere25.position.copy(new THREE.Vector3(allData[i+24].px,allData[i+24].py,allData[i+24].pz));
+      sphere26.position.copy(new THREE.Vector3(allData[i+25].px,allData[i+25].py,allData[i+25].pz));
+      sphere27.position.copy(new THREE.Vector3(allData[i+26].px,allData[i+26].py,allData[i+26].pz));
+      sphere28.position.copy(new THREE.Vector3(allData[i+27].px,allData[i+27].py,allData[i+27].pz));
+      sphere29.position.copy(new THREE.Vector3(allData[i+28].px,allData[i+28].py,allData[i+28].pz));
+      sphere30.position.copy(new THREE.Vector3(allData[i+29].px,allData[i+29].py,allData[i+29].pz));
+      sphere31.position.copy(new THREE.Vector3(allData[i+30].px,allData[i+30].py,allData[i+30].pz));
+      sphere32.position.copy(new THREE.Vector3(allData[i+31].px,allData[i+31].py,allData[i+31].pz));
+      sphere33.position.copy(new THREE.Vector3(allData[i+32].px,allData[i+32].py,allData[i+32].pz));
+      sphere34.position.copy(new THREE.Vector3(allData[i+33].px,allData[i+33].py,allData[i+33].pz));
+      sphere35.position.copy(new THREE.Vector3(allData[i+34].px,allData[i+34].py,allData[i+34].pz));
+      sphere36.position.copy(new THREE.Vector3(allData[i+35].px,allData[i+35].py,allData[i+35].pz));
+      sphere37.position.copy(new THREE.Vector3(allData[i+36].px,allData[i+36].py,allData[i+36].pz));
+      sphere38.position.copy(new THREE.Vector3(allData[i+37].px,allData[i+37].py,allData[i+37].pz));
+      sphere39.position.copy(new THREE.Vector3(allData[i+38].px,allData[i+38].py,allData[i+38].pz));
+      sphere40.position.copy(new THREE.Vector3(allData[i+39].px,allData[i+39].py,allData[i+39].pz));
+      sphere41.position.copy(new THREE.Vector3(allData[i+40].px,allData[i+40].py,allData[i+40].pz));
+      sphere42.position.copy(new THREE.Vector3(allData[i+41].px,allData[i+41].py,allData[i+41].pz));
+      sphere43.position.copy(new THREE.Vector3(allData[i+42].px,allData[i+42].py,allData[i+42].pz));
+      sphere44.position.copy(new THREE.Vector3(allData[i+43].px,allData[i+43].py,allData[i+43].pz));
+      sphere45.position.copy(new THREE.Vector3(allData[i+44].px,allData[i+44].py,allData[i+44].pz));
+      sphere46.position.copy(new THREE.Vector3(allData[i+45].px,allData[i+45].py,allData[i+45].pz));
+      sphere47.position.copy(new THREE.Vector3(allData[i+46].px,allData[i+46].py,allData[i+46].pz));
+      sphere48.position.copy(new THREE.Vector3(allData[i+47].px,allData[i+47].py,allData[i+47].pz));
+      sphere49.position.copy(new THREE.Vector3(allData[i+48].px,allData[i+48].py,allData[i+48].pz));
+      sphere50.position.copy(new THREE.Vector3(allData[i+49].px,allData[i+49].py,allData[i+49].pz));
+      sphere51.position.copy(new THREE.Vector3(allData[i+50].px,allData[i+50].py,allData[i+50].pz));
+      sphere52.position.copy(new THREE.Vector3(allData[i+51].px,allData[i+51].py,allData[i+51].pz));
+      sphere53.position.copy(new THREE.Vector3(allData[i+52].px,allData[i+52].py,allData[i+52].pz));
+      sphere54.position.copy(new THREE.Vector3(allData[i+53].px,allData[i+53].py,allData[i+53].pz));
+      sphere55.position.copy(new THREE.Vector3(allData[i+54].px,allData[i+54].py,allData[i+54].pz));
+      sphere56.position.copy(new THREE.Vector3(allData[i+55].px,allData[i+55].py,allData[i+55].pz));
+      sphere57.position.copy(new THREE.Vector3(allData[i+56].px,allData[i+56].py,allData[i+56].pz));
+      sphere58.position.copy(new THREE.Vector3(allData[i+57].px,allData[i+57].py,allData[i+57].pz));
+      sphere59.position.copy(new THREE.Vector3(allData[i+58].px,allData[i+58].py,allData[i+58].pz));
+      sphere60.position.copy(new THREE.Vector3(allData[i+59].px,allData[i+59].py,allData[i+59].pz));
+      sphere61.position.copy(new THREE.Vector3(allData[i+60].px,allData[i+60].py,allData[i+60].pz));
+      sphere62.position.copy(new THREE.Vector3(allData[i+61].px,allData[i+61].py,allData[i+61].pz));
+      sphere63.position.copy(new THREE.Vector3(allData[i+62].px,allData[i+62].py,allData[i+62].pz));
+      sphere64.position.copy(new THREE.Vector3(allData[i+63].px,allData[i+63].py,allData[i+63].pz));
+      sphere65.position.copy(new THREE.Vector3(allData[i+64].px,allData[i+64].py,allData[i+64].pz));
+      sphere66.position.copy(new THREE.Vector3(allData[i+65].px,allData[i+65].py,allData[i+65].pz));
+      sphere67.position.copy(new THREE.Vector3(allData[i+66].px,allData[i+66].py,allData[i+66].pz));
+      sphere68.position.copy(new THREE.Vector3(allData[i+67].px,allData[i+67].py,allData[i+67].pz));
+      sphere69.position.copy(new THREE.Vector3(allData[i+68].px,allData[i+68].py,allData[i+68].pz));
+      sphere70.position.copy(new THREE.Vector3(allData[i+69].px,allData[i+69].py,allData[i+69].pz));
+      sphere71.position.copy(new THREE.Vector3(allData[i+70].px,allData[i+70].py,allData[i+70].pz));
+      sphere72.position.copy(new THREE.Vector3(allData[i+71].px,allData[i+71].py,allData[i+71].pz));
+      sphere73.position.copy(new THREE.Vector3(allData[i+72].px,allData[i+72].py,allData[i+72].pz));
+      sphere74.position.copy(new THREE.Vector3(allData[i+73].px,allData[i+73].py,allData[i+73].pz));
+      sphere75.position.copy(new THREE.Vector3(allData[i+74].px,allData[i+74].py,allData[i+74].pz));
+      sphere76.position.copy(new THREE.Vector3(allData[i+75].px,allData[i+75].py,allData[i+75].pz));
+      sphere77.position.copy(new THREE.Vector3(allData[i+76].px,allData[i+76].py,allData[i+76].pz));
+      sphere78.position.copy(new THREE.Vector3(allData[i+77].px,allData[i+77].py,allData[i+77].pz));
+      sphere79.position.copy(new THREE.Vector3(allData[i+78].px,allData[i+78].py,allData[i+78].pz));
+      sphere80.position.copy(new THREE.Vector3(allData[i+79].px,allData[i+79].py,allData[i+79].pz));
+      sphere81.position.copy(new THREE.Vector3(allData[i+80].px,allData[i+80].py,allData[i+80].pz));
+      sphere82.position.copy(new THREE.Vector3(allData[i+81].px,allData[i+81].py,allData[i+81].pz));
+      sphere83.position.copy(new THREE.Vector3(allData[i+82].px,allData[i+82].py,allData[i+82].pz));
+      sphere84.position.copy(new THREE.Vector3(allData[i+83].px,allData[i+83].py,allData[i+83].pz));
+      sphere85.position.copy(new THREE.Vector3(allData[i+84].px,allData[i+84].py,allData[i+84].pz));
+      sphere86.position.copy(new THREE.Vector3(allData[i+85].px,allData[i+85].py,allData[i+85].pz));
+      sphere87.position.copy(new THREE.Vector3(allData[i+86].px,allData[i+86].py,allData[i+86].pz));
+      sphere88.position.copy(new THREE.Vector3(allData[i+87].px,allData[i+87].py,allData[i+87].pz));
+      sphere89.position.copy(new THREE.Vector3(allData[i+88].px,allData[i+88].py,allData[i+88].pz));
+      sphere90.position.copy(new THREE.Vector3(allData[i+89].px,allData[i+89].py,allData[i+89].pz));
+      sphere91.position.copy(new THREE.Vector3(allData[i+90].px,allData[i+90].py,allData[i+90].pz));
+      sphere92.position.copy(new THREE.Vector3(allData[i+91].px,allData[i+91].py,allData[i+91].pz));
+      sphere93.position.copy(new THREE.Vector3(allData[i+92].px,allData[i+92].py,allData[i+92].pz));
+      sphere94.position.copy(new THREE.Vector3(allData[i+93].px,allData[i+93].py,allData[i+93].pz));
+      sphere95.position.copy(new THREE.Vector3(allData[i+94].px,allData[i+94].py,allData[i+94].pz));
+      sphere96.position.copy(new THREE.Vector3(allData[i+95].px,allData[i+95].py,allData[i+95].pz));
+      sphere97.position.copy(new THREE.Vector3(allData[i+96].px,allData[i+96].py,allData[i+96].pz));
+      sphere98.position.copy(new THREE.Vector3(allData[i+97].px,allData[i+97].py,allData[i+97].pz));
+      sphere99.position.copy(new THREE.Vector3(allData[i+98].px,allData[i+98].py,allData[i+98].pz));
+      sphere100.position.copy(new THREE.Vector3(allData[i+99].px,allData[i+99].py,allData[i+99].pz));
+      sphere101.position.copy(new THREE.Vector3(allData[i+100].px,allData[i+100].py,allData[i+100].pz));
+      sphere102.position.copy(new THREE.Vector3(allData[i+101].px,allData[i+101].py,allData[i+101].pz));
+      sphere103.position.copy(new THREE.Vector3(allData[i+102].px,allData[i+102].py,allData[i+102].pz));
+      sphere104.position.copy(new THREE.Vector3(allData[i+103].px,allData[i+103].py,allData[i+103].pz));
+      sphere105.position.copy(new THREE.Vector3(allData[i+104].px,allData[i+104].py,allData[i+104].pz));
+      sphere106.position.copy(new THREE.Vector3(allData[i+105].px,allData[i+105].py,allData[i+105].pz));
+      sphere107.position.copy(new THREE.Vector3(allData[i+106].px,allData[i+106].py,allData[i+106].pz));
+      sphere108.position.copy(new THREE.Vector3(allData[i+107].px,allData[i+107].py,allData[i+107].pz));
+      sphere109.position.copy(new THREE.Vector3(allData[i+108].px,allData[i+108].py,allData[i+108].pz));
+      sphere110.position.copy(new THREE.Vector3(allData[i+109].px,allData[i+109].py,allData[i+109].pz));
+      sphere111.position.copy(new THREE.Vector3(allData[i+110].px,allData[i+110].py,allData[i+110].pz));
+      sphere112.position.copy(new THREE.Vector3(allData[i+111].px,allData[i+111].py,allData[i+111].pz));
+      sphere113.position.copy(new THREE.Vector3(allData[i+112].px,allData[i+112].py,allData[i+112].pz));
+      sphere114.position.copy(new THREE.Vector3(allData[i+113].px,allData[i+113].py,allData[i+113].pz));
+      sphere115.position.copy(new THREE.Vector3(allData[i+114].px,allData[i+114].py,allData[i+114].pz));
+      sphere116.position.copy(new THREE.Vector3(allData[i+115].px,allData[i+115].py,allData[i+115].pz));
+      sphere117.position.copy(new THREE.Vector3(allData[i+116].px,allData[i+116].py,allData[i+116].pz));
+      sphere118.position.copy(new THREE.Vector3(allData[i+117].px,allData[i+117].py,allData[i+117].pz));
+      sphere119.position.copy(new THREE.Vector3(allData[i+118].px,allData[i+118].py,allData[i+118].pz));
+      sphere120.position.copy(new THREE.Vector3(allData[i+119].px,allData[i+119].py,allData[i+119].pz));
+      sphere121.position.copy(new THREE.Vector3(allData[i+120].px,allData[i+120].py,allData[i+120].pz));
+      //scene.add(sphere);
+    }
+    scene.add(sphere1);
+    scene.add(sphere2);
+    scene.add(sphere3);
+    scene.add(sphere4);
+    scene.add(sphere5);
+    scene.add(sphere6);
+    scene.add(sphere7);
+    scene.add(sphere8);
+    scene.add(sphere9);
+    scene.add(sphere10);
+    scene.add(sphere11);
+    scene.add(sphere12);
+    scene.add(sphere13);
+    scene.add(sphere14);
+    scene.add(sphere15);
+    scene.add(sphere16);
+    scene.add(sphere17);
+    scene.add(sphere18);
+    scene.add(sphere19);
+    scene.add(sphere20);
+    scene.add(sphere21);
+    scene.add(sphere22);
+    scene.add(sphere23);
+    scene.add(sphere24);
+    scene.add(sphere25);
+    scene.add(sphere26);
+    scene.add(sphere27);
+    scene.add(sphere28);
+    scene.add(sphere29);
+    scene.add(sphere30);
+    scene.add(sphere31);
+    scene.add(sphere32);
+    scene.add(sphere33);
+    scene.add(sphere34);
+    scene.add(sphere35);
+    scene.add(sphere36);
+    scene.add(sphere37);
+    scene.add(sphere38);
+    scene.add(sphere39);
+    scene.add(sphere40);
+    scene.add(sphere41);
+    scene.add(sphere42);
+    scene.add(sphere43);
+    scene.add(sphere44);
+    scene.add(sphere45);
+    scene.add(sphere46);
+    scene.add(sphere47);
+    scene.add(sphere48);
+    scene.add(sphere49);
+    scene.add(sphere50);
+    scene.add(sphere51);
+    scene.add(sphere52);
+    scene.add(sphere53);
+    scene.add(sphere54);
+    scene.add(sphere55);
+    scene.add(sphere56);
+    scene.add(sphere57);
+    scene.add(sphere58);
+    scene.add(sphere59);
+    scene.add(sphere60);
+    scene.add(sphere61);
+    scene.add(sphere62);
+    scene.add(sphere63);
+    scene.add(sphere64);
+    scene.add(sphere65);
+    scene.add(sphere66);
+    scene.add(sphere67);
+    scene.add(sphere68);
+    scene.add(sphere69);
+    scene.add(sphere70);
+    scene.add(sphere71);
+    scene.add(sphere72);
+    scene.add(sphere73);
+    scene.add(sphere74);
+    scene.add(sphere75);
+    scene.add(sphere76);
+    scene.add(sphere77);
+    scene.add(sphere78);
+    scene.add(sphere79);
+    scene.add(sphere80);
+    scene.add(sphere81);
+    scene.add(sphere82);
+    scene.add(sphere83);
+    scene.add(sphere84);
+    scene.add(sphere85);
+    scene.add(sphere86);
+    scene.add(sphere87);
+    scene.add(sphere88);
+    scene.add(sphere89);
+    scene.add(sphere90);
+    scene.add(sphere91);
+    scene.add(sphere92);
+    scene.add(sphere93);
+    scene.add(sphere94);
+    scene.add(sphere95);
+    scene.add(sphere96);
+    scene.add(sphere97);
+    scene.add(sphere98);
+    scene.add(sphere99);
+    scene.add(sphere100);
+    scene.add(sphere101);
+    scene.add(sphere102);
+    scene.add(sphere103);
+    scene.add(sphere104);
+    scene.add(sphere105);
+    scene.add(sphere106);
+    scene.add(sphere107);
+    scene.add(sphere108);
+    scene.add(sphere109);
+    scene.add(sphere110);
+    scene.add(sphere111);
+    scene.add(sphere112);
+    scene.add(sphere113);
+    scene.add(sphere114);
+    scene.add(sphere115);
+    scene.add(sphere116);
+    scene.add(sphere117);
+    scene.add(sphere118);
+    scene.add(sphere119);
+    scene.add(sphere120);
+    scene.add(sphere121);
+
+    renderer.render( scene, camera );
+  }
+  // render()-end
+</script>
+</body>
+</html>

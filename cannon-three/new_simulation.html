@@ -1,0 +1,317 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,user-scalable=no,minimum-scale=1.0,maximum-scale=1.0">
+
+  <style>
+  body {
+    font-family: Monospace;
+    background-color: #000;
+    color: #000;
+    margin: 0px;
+    overflow: hidden;
+  }
+  #info {
+    text-align: center;
+    padding: 10px;
+    z-index: 10;
+    width: 100%;
+    position: absolute;
+  }
+  a {
+    text-decoration: underline;
+    cursor: pointer;
+  }
+</style>
+<script src="./libs/Three.js"></script>
+<script src="./libs/TrackballControls.js"></script> // add new version of CANNON.js
+<script src="./libs/Detector.js"></script>
+<script src="./build/cannon.js"></script>
+</head>
+<body>
+
+  <header>
+    <title>Ikesu Simulation</title>
+  </header>
+  <script>
+  ///////////////////////////////////////////////////////////////////////////
+  var dt = 1/60;
+  var clothMass = 1;
+  var clothSizeXY = 1;
+  var clothSizeZ = 1;
+  var nxy = 12;
+  var nz = 3;
+  var mass = clothMass / (nxy*nz);
+  var allData = [];
+
+  ///////////////////////////////////////////////
+    function loadCSV(targetFile){
+      // 読み込んだデータを1行ずつ格納する配列
+//       var allData = [];
+
+       // XMLHttpRequestの用意
+       var request = new XMLHttpRequest();
+       request.open("get", targetFile, false);
+  //     request.open("get", targetFile, true);
+       request.overrideMimeType('floating/csv; charset=UTF-8');
+       request.send(null);
+
+       // 読み込んだCSVデータ
+       var csvData = request.responseText;
+
+       // CSVの全行を取得
+       var lines = csvData.split("\n");
+
+       for (var i = 0; i < lines.length; i++) {
+           // 1行ごとの処理
+
+           var wordSet = lines[i].split(",");
+
+           var wordData = {
+               px: ((parseFloat(wordSet[0])/10)),
+               py: ((parseFloat(wordSet[1])/10)),
+               pz: ((parseFloat(wordSet[2])/10)),
+           };
+
+           allData.push(wordData);
+       }
+       console.log(allData);
+    }
+    loadCSV("floating.csv")
+    //loadCSV("floating.csv");
+  ///////////////////////////////////////////////
+
+  // createXMLHttpRequest()
+  function createXMLHttpRequest() {
+    var XMLhttpObject = null;
+    XMLhttpObject = new XMLHttpRequest();
+    return XMLhttpObject;
+  }
+
+// clothFunction() 布の(u,v)位置の(x,y,z)座標を返す(ここでは円柱形)
+  function clothFunction(u, v) {
+    var z = ( v / 3 ) * 1000;
+    var r = clothSizeXY / 5;
+    var y = -r * Math.cos(2 * Math.PI * u) * 1000;
+    var x = -r * Math.sin(2 * Math.PI * u) * 1000;
+    return new THREE.Vector3(x, y, z);
+  }
+  // clothFunction()- end
+
+  if ( ! Detector.webgl ) Detector.addGetWebGLMessage();
+  var container;
+  var camera, scene, renderer;
+  var clothGeometry;
+  var particle;
+  var particles = [];
+  var world;
+
+  initCannon();
+  init();
+  animate();
+
+///// function
+// initCannon()
+  function initCannon(){
+    world = new CANNON.World();
+    world.broadphase = new CANNON.NaiveBroadphase();
+    world.solver.iterations = 20;
+
+    // Create cannon particles
+    for ( var i = 0; i < nxy; i++ ) {
+      particles.push([]);
+      //particles.set([]);
+      for ( var j = 0; j < nz; j++ ) {
+        var p = clothFunction(i/nxy, j/nz); // 布形状の3次元座標ベクトルp
+        //        var particle = new CANNON.Particle(j==(nz-1) ? 0 : mass);
+        var particle = new CANNON.Body({
+          mass: j==(nz-1)? 0:mass,
+          mass: j == nz ? 0:mass
+        });
+        particle.linearDamping = 0.5;
+        particle.position.set( p.x, p.y, p.z );
+        particles[i].push( particle );
+        //particles[i].set( particle );
+        world.addBody( particle );
+        //particle.velocity.set( 0, 0, 0 );
+      }
+    }
+
+    // connect() 2つのparticleを接続する
+    function connect(i1,j1,i2,j2){
+      var p1 = particles[i1][j1];
+      var p2 = particles[i2][j2];
+      var d = p1.position.distanceTo(p2.position);
+      world.addConstraint( new CANNON.DistanceConstraint(p1,p2,d) );
+    }
+    // connect()-end
+
+    // 構成ばね
+    for(var i=0; i< nxy; i++){
+      for(var j=0; j< nz; j++){
+        connect(i,j,(i+1) % nxy,j);
+        if (j< nz-1) {
+          connect(i,j,i,(j+1) % nz);
+        }
+      }
+    }
+
+    // せん断ばね
+    for(var i=0; i< nxy; i++){
+      for(var j=0; j< nz; j++){
+        if (j < nz-1) {
+          connect((i+1) % nxy,j,i,(j+1) % nz);
+          connect(i,j,(i+1) % nxy,(j+1) % nz);
+        }
+      }
+    }
+
+  }
+  // initCannon()-end
+
+ // init()
+  function init() {
+    container = document.createElement( 'info' );
+    document.body.appendChild( container );
+
+    // scene
+    scene = new THREE.Scene();
+    scene.fog = new THREE.Fog( 0x000000, 500, 10000 );
+
+    // camera
+    camera = new THREE.PerspectiveCamera( 45, window.innerWidth / window.innerHeight, 1, 10000 );
+    camera.position.set( 1000, 700, 1000 );
+    scene.add( camera );
+
+    // Controls
+    controls = new THREE.TrackballControls( camera );
+
+    // lights
+    var light = new THREE.DirectionalLight( 0xffffff, 1.75 );
+    light.position.set( 100, 100, 100 );
+    scene.add( light );
+
+    // cloth material
+    var clothTexture = THREE.ImageUtils.loadTexture('circuit_pattern2.png');
+
+    var clothMaterial = new THREE.MeshPhongMaterial( {
+      alphaTest: 0.5,
+      ambient: 0xffffff,
+      color: 0xffffff,
+      specular: 0x333333,
+      emissive: 0x222222,
+      shininess: 5,
+      map: clothTexture,
+      side: THREE.DoubleSide
+    } );
+
+    // cloth geometry
+    clothGeometry = new THREE.ParametricGeometry( clothFunction, nxy, nz-1, true );
+    clothGeometry.dynamic = true;
+    clothGeometry.computeFaceNormals();
+
+    // cloth mesh
+    object = new THREE.Mesh( clothGeometry, clothMaterial );
+    object.position.set(0, 0, 0);
+    object.rotation.set(Math.PI/2, Math.PI, 0);
+    //object.scale.set(0.5,0.5,0.5);
+    object.castShadow = false;
+    scene.add( object );
+
+    var axis = new THREE.AxisHelper(1000);
+    axis.position.set(0,0,0);
+    scene.add(axis);
+
+    renderer = new THREE.WebGLRenderer( { antialias: true } );
+    renderer.setSize( window.innerWidth, window.innerHeight );
+    renderer.setClearColor( 0x4682b4 );
+
+    container.appendChild( renderer.domElement );
+    window.addEventListener( 'resize', onWindowResize, false );
+    camera.lookAt( scene.position );
+  }
+  // init()-end
+
+  // onWindowResize()
+  function onWindowResize() {
+   camera.aspect = window.innerWidth / window.innerHeight;
+   camera.updateProjectionMatrix();
+   renderer.setSize( window.innerWidth, window.innerHeight );
+  }
+  // onWindowResiza()-end
+
+  // animate()
+  function animate() {
+    requestAnimationFrame( animate );
+    controls.update();
+    world.step(1/60);
+    //world.gravity.set( -1000, -1000, -1000);
+    render();
+  }
+  // animate()-end
+
+  // render()
+  function render() {
+    var  pcnt=0;
+
+/*    pcnt = pcnt%5192;
+
+    var particle = new CANNON.Body({
+      mass: j==nz? 0:mass
+    });
+    particle.linearDamping = 10;
+
+    particles[9][2].position.set( new THREE.Vector3(allData[pcnt].px+0.1,allData[pcnt].py,allData[pcnt].pz+0.17)  );
+    clothGeometry.vertices[35].copy( particles[9][2].position );
+    //particles[9][2].copy( particle );
+    //particles[0].position.set( particle );
+    //particle.position.set( new THREE.Vector3(allData[pcnt+1].px+0.1,allData[pcnt+1].py,allData[pcnt+1].pz+0.08) );
+    //particles[6][2].push( particle );
+    particles[6][2].position.set( new THREE.Vector3(allData[pcnt+2].px,allData[pcnt+2].py+0.2,allData[pcnt+2].pz+0.17) );
+  //  particles[6][2].copy( particle );
+    particles[9][1].position.set( new THREE.Vector3(allData[pcnt+3].px,allData[pcnt+3].py+0.2,allData[pcnt+3].pz+0.08) );
+    //particles[9][1].copy( particle );
+    particles[6][1].position.set( new THREE.Vector3(allData[pcnt+4].px-0.2,allData[pcnt+4].py,allData[pcnt+4].pz) );
+    //particles[6][1].copy( particle );
+    //particle.position.set( new THREE.Vector3(allData[pcnt+5].px-0.2,allData[pcnt+5].py,allData[pcnt+5].pz+0.17) );
+    //particles[5].push( particle );
+    particles[9][0].position.set( new THREE.Vector3(allData[pcnt+6].px-0.2,allData[pcnt+6].py,allData[pcnt+6].pz+0.08) );
+    //particles[9][0].copy( particle );
+    //particle.position.set( new THREE.Vector3(allData[pcnt+7].px+0.1,allData[pcnt+7].py,allData[pcnt+7].pz) );
+    //particles[7].push( particle );
+    pcnt = pcnt + 8;
+*/
+    for ( var i = 0; i <= nxy; i++ ) {
+      for ( var j = 0; j < nz; j++ ) {
+        var i2 = i % nxy;
+        var idx = j*(nxy+1) + i;
+        for ( pcnt = 0; pcnt < 5192; pcnt+=8 ) {
+        particles[9][2].position.copy( new THREE.Vector3(allData[pcnt].px+50,allData[pcnt].py-50,allData[pcnt].pz+100) );
+//        clothGeometry.vertices[35].copy( particles[9][2].position );
+
+//        particles[9][1].position.copy( new THREE.Vector3(allData[pcnt+3].px+50,allData[pcnt+3].py-30,allData[pcnt+3].pz) );
+//        clothGeometry.vertices[22].copy( particles[9][1].positon );
+
+//        particles[9][0].position.copy( new THREE.Vector3(allData[pcnt+6].px+100,allData[pcnt+6].py,allData[pcnt+6].pz-100) );
+//        clothGeometry.vertices[9].copy( particles[9][0].position );
+
+//        particles[6][2].position.copy( new THREE.Vector3(allData[pcnt+2].px-70,allData[pcnt+2].py+150,allData[pcnt+2].pz+100) );
+
+//        particles[6][1].position.copy( new THREE.Vector3(allData[pcnt+4].px-70,allData[pcnt+4].py+150,allData[pcnt+4].pz) );
+
+        clothGeometry.vertices[idx].copy(particles[i2][j].position);
+      }
+      }
+    }
+    clothGeometry.computeFaceNormals();
+    clothGeometry.computeVertexNormals();
+    clothGeometry.normalsNeedUpdate = true;
+    clothGeometry.verticesNeedUpdate = true;
+    renderer.render( scene, camera );
+  }
+  // render()-end
+  ///////////////////////////////////////////////////////////////////////////
+</script>
+</body>
+</html>
